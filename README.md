@@ -4,11 +4,22 @@ A Jupyter notebook client for calling the PINN (Physics-Informed Neural Network)
 
 ## Overview
 
-This notebook:
+This tool:
 1. Reads satellite state vectors from an input JSON file
 2. Calls the PINN API endpoint to get trajectory predictions
 3. Saves API responses to an output JSON file
 4. Generates 3D trajectory plots and saves them as images
+
+## Project Structure
+
+```
+pinn-api-client/
+├── api_client.ipynb    # Main notebook (run this)
+├── pinn_client.py      # API functions (implementation)
+├── input_states.json   # Sample input file
+├── requirements.txt    # Python dependencies
+└── README.md
+```
 
 ## Prerequisites
 
