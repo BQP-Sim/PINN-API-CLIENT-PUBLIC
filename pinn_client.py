@@ -240,6 +240,7 @@ def plot_all_trajectories(results: list, save_prefix: str = "trajectory_satellit
         ax.grid(True)
 
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.show()
         plt.close(fig)
 
         saved_files.append(save_path)
