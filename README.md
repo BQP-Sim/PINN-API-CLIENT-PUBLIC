@@ -50,11 +50,11 @@ pinn-api-client/
 
 3. **View outputs**:
    - `api_responses.json` - API responses with trajectory data
-   - `trajectory_plot_satellite_X.png` - 3D trajectory plots for each satellite
+   - `trajectory_satellite_X.png` - 3D trajectory plots for each satellite
 
 ## Input File Format
 
-The input file (`input_states.json`) supports two formats:
+The input file (`input_states.json`) supports multiple formats:
 
 ### JSON Array (recommended)
 ```json
@@ -86,7 +86,31 @@ The input file (`input_states.json`) supports two formats:
 }
 ```
 
+### Alternate Format (auto-converted)
+
+The client also supports an alternate format with separate position/velocity fields in kilometers. This format is auto-detected and converted to the API format.
+
+```json
+{
+  "xpos": -41825.915857758,
+  "ypos": -5226.43453712596,
+  "zpos": 1386.1644692968,
+  "xvel": 0.377893637472634,
+  "yvel": -3.04789052585241,
+  "zvel": -0.130866937678928,
+  "epoch": "2025-12-03T02:20:57.497920Z"
+}
+```
+
+**Auto-conversion:**
+- `xpos/ypos/zpos` (km) → `initial_position` (meters)
+- `xvel/yvel/zvel` (km/s) → `initial_velocity` (m/s)
+- `epoch` → `start_date`
+- Default values applied: `T_STEP_DURATION=5000`, `N_STEPS=1`, `POINTS_PER_STEP=50`
+
 ## Input Parameters
+
+### API Format
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -96,6 +120,14 @@ The input file (`input_states.json`) supports two formats:
 | `N_STEPS` | integer | Number of propagation steps |
 | `POINTS_PER_STEP` | integer | Output points per step |
 | `start_date` | string | ISO 8601 timestamp |
+
+### Alternate Format
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `xpos`, `ypos`, `zpos` | number | Position in kilometers |
+| `xvel`, `yvel`, `zvel` | number | Velocity in km/s |
+| `epoch` | string | ISO 8601 timestamp |
 
 ## API Response
 

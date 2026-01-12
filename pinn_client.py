@@ -14,6 +14,69 @@ from mpl_toolkits.mplot3d import Axes3D
 # API Configuration
 API_URL = "https://dev-pinn.bosonqpsi.com/pinn"
 
+# Default propagation parameters
+DEFAULT_T_STEP_DURATION = 5000
+DEFAULT_N_STEPS = 1
+DEFAULT_POINTS_PER_STEP = 50
+
+
+def is_alternate_format(state: dict) -> bool:
+    """
+    Detect if the input state uses alternate format (xpos/ypos/zpos fields).
+
+    Args:
+        state: Satellite state dictionary
+
+    Returns:
+        True if alternate format, False if API format
+    """
+    return all(key in state for key in ['xpos', 'ypos', 'zpos'])
+
+
+def transform_state(state: dict) -> dict:
+    """
+    Transform alternate satellite state format to API-expected format.
+
+    Handles conversion from:
+    - xpos/ypos/zpos (km) -> initial_position (meters)
+    - xvel/yvel/zvel (km/s) -> initial_velocity (m/s)
+    - epoch -> start_date
+
+    Args:
+        state: Satellite state dictionary (either format)
+
+    Returns:
+        API-compatible state dictionary
+    """
+    # If already in API format, return as-is
+    if 'initial_position' in state:
+        return state
+
+    # Check if it's alternate format
+    if not is_alternate_format(state):
+        # Unknown format, return as-is and let API validate
+        return state
+
+    # Transform alternate format to API format
+    transformed = {
+        'initial_position': [
+            state['xpos'] * 1000,  # km to meters
+            state['ypos'] * 1000,
+            state['zpos'] * 1000
+        ],
+        'initial_velocity': [
+            state['xvel'] * 1000,  # km/s to m/s
+            state['yvel'] * 1000,
+            state['zvel'] * 1000
+        ],
+        'start_date': state.get('epoch'),
+        'T_STEP_DURATION': state.get('T_STEP_DURATION', DEFAULT_T_STEP_DURATION),
+        'N_STEPS': state.get('N_STEPS', DEFAULT_N_STEPS),
+        'POINTS_PER_STEP': state.get('POINTS_PER_STEP', DEFAULT_POINTS_PER_STEP)
+    }
+
+    return transformed
+
 
 def load_satellite_states(filepath: str) -> list:
     """
@@ -120,7 +183,9 @@ def process_satellites(input_file: str, output_file: str) -> list:
     for i, state in enumerate(states):
         print(f"Processing satellite {i+1}/{len(states)}...", end=" ")
 
-        api_result = call_pinn_api(state)
+        # Transform to API format if needed (handles alternate format auto-detection)
+        transformed_state = transform_state(state)
+        api_result = call_pinn_api(transformed_state)
 
         result = {
             'satellite_index': i + 1,
