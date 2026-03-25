@@ -6,9 +6,10 @@ A Jupyter notebook client for calling the PINN (Physics-Informed Neural Network)
 
 This tool:
 1. Reads satellite state vectors from an input JSON file
-2. Calls the PINN API endpoint to get trajectory predictions
-3. Saves API responses to an output JSON file
-4. Generates 3D trajectory plots and saves them as images
+2. Processes sequential states with dynamic duration calculation
+3. Calls the PINN API endpoint to get trajectory predictions
+4. Saves API responses to an output JSON file
+5. Generates 3D trajectory plots (combined and individual) and saves them as images
 
 ## Project Structure
 
@@ -49,8 +50,9 @@ pinn-api-client/
    ```
 
 3. **View outputs**:
-   - `api_responses.json` - API responses with trajectory data
-   - `trajectory_satellite_X.png` - 3D trajectory plots for each satellite
+   - `sequential_results.json` - API responses with trajectory data
+   - `combined_trajectory.png` - Combined 3D plot of all trajectories
+   - `trajectory_X.png` - Individual 3D trajectory plots for each input
 
 ## Input File Format
 
@@ -148,10 +150,15 @@ The trajectory contains position coordinates in meters for each time step.
 Edit these variables in the notebook (Cell 1) to customize paths:
 
 ```python
-API_URL = "https://dev-pinn.bosonqpsi.com/pinn"
 INPUT_FILE = "input_states.json"
-OUTPUT_FILE = "api_responses.json"
-PLOT_OUTPUT = "trajectory_plot.png"
+OUTPUT_FILE = "sequential_results.json"
+PLOT_OUTPUT = "combined_trajectory.png"
+```
+
+The API URL is configured in `pinn_client.py`:
+
+```python
+API_URL = "https://dev-pinn.bosonqpsi.com/pinn"
 ```
 
 ## License

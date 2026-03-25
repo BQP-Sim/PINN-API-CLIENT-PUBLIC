@@ -10,6 +10,7 @@ import requests
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from datetime import datetime
 
 # API Configuration
 API_URL = "https://dev-pinn.bosonqpsi.com/pinn"
@@ -18,6 +19,9 @@ API_URL = "https://dev-pinn.bosonqpsi.com/pinn"
 DEFAULT_T_STEP_DURATION = 5000
 DEFAULT_N_STEPS = 1
 DEFAULT_POINTS_PER_STEP = 50
+
+# Maximum propagation duration (for dynamic duration calculation)
+MAX_DURATION = 5000
 
 
 def is_alternate_format(state: dict) -> bool:
@@ -76,6 +80,38 @@ def transform_state(state: dict) -> dict:
     }
 
     return transformed
+
+
+def calculate_epoch_difference(epoch1: str, epoch2: str) -> float:
+    """
+    Calculate time difference between two epochs in seconds.
+
+    Args:
+        epoch1: Start epoch (ISO 8601 string)
+        epoch2: End epoch (ISO 8601 string)
+
+    Returns:
+        Duration in seconds
+    """
+    # Handle multiple timestamp formats
+    formats = [
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S"
+    ]
+
+    def parse_epoch(epoch_str):
+        for fmt in formats:
+            try:
+                return datetime.strptime(epoch_str, fmt)
+            except ValueError:
+                continue
+        raise ValueError(f"Unable to parse epoch: {epoch_str}")
+
+    t1 = parse_epoch(epoch1)
+    t2 = parse_epoch(epoch2)
+    return (t2 - t1).total_seconds()
 
 
 def load_satellite_states(filepath: str) -> list:
@@ -195,7 +231,7 @@ def process_satellites(input_file: str, output_file: str) -> list:
 
         if api_result['success']:
             result['response'] = api_result['data']
-            num_points = len(api_result['data'].get('trajectory', []))
+            num_points = len(api_result['data'].get('trajectories', []))
             print(f"Success ({num_points} points)")
         else:
             result['error'] = api_result.get('error', 'Unknown error')
@@ -222,6 +258,87 @@ def process_satellites(input_file: str, output_file: str) -> list:
     return results
 
 
+def process_sequential_states(input_file: str, output_file: str) -> list:
+    """
+    Process sequential satellite states with dynamic duration.
+
+    For states at epochs E1, E2, E3, ..., En:
+    - Duration for E1 to E(n-1) = min(E(i+1) - E(i), MAX_DURATION)
+    - Duration for En (last) = MAX_DURATION seconds
+
+    Args:
+        input_file: Path to input JSON with sequential states
+        output_file: Path to save results
+
+    Returns:
+        List of propagation results
+    """
+    states = load_satellite_states(input_file)
+
+    if not states:
+        print("No states found in input file.")
+        return []
+
+    # Sort by epoch
+    states = sorted(states, key=lambda s: s.get('epoch') or s.get('start_date'))
+
+    results = []
+
+    for i, current_state in enumerate(states):
+        epoch_current = current_state.get('epoch') or current_state.get('start_date')
+
+        # Calculate duration
+        if i < len(states) - 1:
+            # Not last state: use epoch difference (capped at MAX_DURATION)
+            next_state = states[i + 1]
+            epoch_next = next_state.get('epoch') or next_state.get('start_date')
+            calculated_duration = calculate_epoch_difference(epoch_current, epoch_next)
+            duration = min(calculated_duration, MAX_DURATION)
+            target_epoch = epoch_next
+        else:
+            # Last state: fixed MAX_DURATION seconds
+            duration = MAX_DURATION
+            target_epoch = None
+
+        print(f"Propagation {i+1}/{len(states)}: {epoch_current} ({duration:.1f}s)", end=" ")
+
+        # Transform and override duration
+        transformed = transform_state(current_state)
+        transformed['T_STEP_DURATION'] = duration
+
+        # Call API
+        api_result = call_pinn_api(transformed)
+
+        result = {
+            'propagation_index': i + 1,
+            'from_epoch': epoch_current,
+            'to_epoch': target_epoch,
+            'duration_seconds': duration,
+            'input': current_state,
+            'success': api_result['success']
+        }
+
+        if api_result['success']:
+            result['response'] = api_result['data']
+            print("Success")
+        else:
+            result['error'] = api_result.get('error')
+            result['details'] = api_result.get('details')
+            print(f"Failed: {result['error']}")
+
+        results.append(result)
+
+    # Save results
+    with open(output_file, 'w') as f:
+        json.dump(results, f, indent=2)
+
+    success_count = sum(1 for r in results if r['success'])
+    print(f"\nResults saved to {output_file}")
+    print(f"Summary: {success_count}/{len(results)} successful propagations")
+
+    return results
+
+
 def plot_trajectory(result: dict, save_path: str = None) -> None:
     """
     Plot a single satellite trajectory in 3D.
@@ -234,11 +351,11 @@ def plot_trajectory(result: dict, save_path: str = None) -> None:
         print(f"Satellite {result.get('satellite_index')}: No trajectory (failed)")
         return
 
-    trajectory = result['response'].get('trajectory', [])
-    if not trajectory:
+    trajectories = result['response'].get('trajectories', [])
+    if not trajectories:
         return
 
-    traj = np.array(trajectory) / 1000.0  # Convert to km
+    traj = np.array([t['statevector'][:3] for t in trajectories])  # positions in km
     satellite_idx = result.get('satellite_index', 1)
 
     fig = plt.figure(figsize=(10, 8))
@@ -263,12 +380,96 @@ def plot_trajectory(result: dict, save_path: str = None) -> None:
     plt.close(fig)
 
 
-def plot_all_trajectories(results: list, save_prefix: str = "trajectory_satellite") -> list:
+def plot_combined_trajectory(results: list, save_path: str = "combined_trajectory.png", title: str = "Combined Satellite Trajectory") -> str:
+    """
+    Plot all trajectories on a single combined 3D graph.
+
+    Args:
+        results: List of result dictionaries from process_sequential_states()
+        save_path: Path to save the combined plot
+        title: Title for the plot
+
+    Returns:
+        Path to saved plot file
+    """
+    successful = [r for r in results if r.get('success')]
+
+    if not successful:
+        print("No successful trajectories to plot.")
+        return None
+
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Color map for different propagation segments
+    colors = plt.cm.viridis(np.linspace(0, 1, len(successful)))
+
+    for idx, result in enumerate(successful):
+        trajectories = result['response'].get('trajectories', [])
+        traj = np.array([t['statevector'][:3] for t in trajectories])  # positions in km
+
+        prop_idx = result.get('propagation_index', idx + 1)
+
+        # Plot trajectory segment
+        ax.plot(traj[:, 0], traj[:, 1], traj[:, 2],
+                color=colors[idx], linewidth=1.5,
+                label=f'Prop {prop_idx}')
+
+        # Mark start of each segment
+        ax.scatter(traj[0, 0], traj[0, 1], traj[0, 2],
+                   color=colors[idx], s=80, marker='o', edgecolors='black')
+
+    # Mark overall start (green) and end (red)
+    first_traj = np.array([t['statevector'][:3] for t in successful[0]['response']['trajectories']])
+    last_traj = np.array([t['statevector'][:3] for t in successful[-1]['response']['trajectories']])
+
+    ax.scatter(first_traj[0, 0], first_traj[0, 1], first_traj[0, 2],
+               color='green', s=150, marker='o', label='Start', edgecolors='black', zorder=5)
+    ax.scatter(last_traj[-1, 0], last_traj[-1, 1], last_traj[-1, 2],
+               color='red', s=150, marker='s', label='End', edgecolors='black', zorder=5)
+
+    ax.set_xlabel('X [km]')
+    ax.set_ylabel('Y [km]')
+    ax.set_zlabel('Z [km]')
+    ax.set_title(title)
+    ax.legend(loc='upper left', fontsize=8)
+    ax.grid(True)
+
+    # Set equal aspect ratio for all axes
+    all_points = []
+    for r in successful:
+        traj = np.array([t['statevector'][:3] for t in r['response'].get('trajectories', [])])
+        all_points.extend(traj)
+    all_points = np.array(all_points)
+
+    max_range = np.array([
+        all_points[:, 0].max() - all_points[:, 0].min(),
+        all_points[:, 1].max() - all_points[:, 1].min(),
+        all_points[:, 2].max() - all_points[:, 2].min()
+    ]).max() / 2.0
+
+    mid_x = (all_points[:, 0].max() + all_points[:, 0].min()) / 2.0
+    mid_y = (all_points[:, 1].max() + all_points[:, 1].min()) / 2.0
+    mid_z = (all_points[:, 2].max() + all_points[:, 2].min()) / 2.0
+
+    ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.show()
+    plt.close(fig)
+
+    print(f"Combined plot saved: {save_path}")
+    return save_path
+
+
+def plot_all_trajectories(results: list, save_prefix: str = "trajectory") -> list:
     """
     Plot all satellite trajectories and save as individual PNG files.
 
     Args:
-        results: List of result dictionaries from process_satellites()
+        results: List of result dictionaries from process_satellites() or process_sequential_states()
         save_prefix: Prefix for output filenames
 
     Returns:
@@ -281,14 +482,15 @@ def plot_all_trajectories(results: list, save_prefix: str = "trajectory_satellit
         print("No successful trajectories to plot.")
         return saved_files
 
-    print(f"\nGenerating {len(successful)} plot(s)...")
+    print(f"\nGenerating {len(successful)} individual plot(s)...")
 
     for result in successful:
-        satellite_idx = result.get('satellite_index', 1)
-        save_path = f"{save_prefix}_{satellite_idx}.png"
+        # Support both result formats: propagation_index (sequential) or satellite_index (batch)
+        idx = result.get('propagation_index') or result.get('satellite_index', 1)
+        save_path = f"{save_prefix}_{idx}.png"
 
-        trajectory = result['response'].get('trajectory', [])
-        traj = np.array(trajectory) / 1000.0
+        trajectories = result['response'].get('trajectories', [])
+        traj = np.array([t['statevector'][:3] for t in trajectories])  # positions in km
 
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection='3d')
@@ -300,9 +502,24 @@ def plot_all_trajectories(results: list, save_prefix: str = "trajectory_satellit
         ax.set_xlabel('X [km]')
         ax.set_ylabel('Y [km]')
         ax.set_zlabel('Z [km]')
-        ax.set_title(f'Satellite {satellite_idx} Trajectory')
+        ax.set_title(f'Trajectory {idx}')
         ax.legend()
         ax.grid(True)
+
+        # Set equal aspect ratio for all axes
+        max_range = np.array([
+            traj[:, 0].max() - traj[:, 0].min(),
+            traj[:, 1].max() - traj[:, 1].min(),
+            traj[:, 2].max() - traj[:, 2].min()
+        ]).max() / 2.0
+
+        mid_x = (traj[:, 0].max() + traj[:, 0].min()) / 2.0
+        mid_y = (traj[:, 1].max() + traj[:, 1].min()) / 2.0
+        mid_z = (traj[:, 2].max() + traj[:, 2].min()) / 2.0
+
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
 
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         plt.show()

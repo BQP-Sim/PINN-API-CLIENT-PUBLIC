@@ -1,5 +1,6 @@
 # Output files
 api_responses.json
+sequential_results.json
 *.png
 
 # Python
