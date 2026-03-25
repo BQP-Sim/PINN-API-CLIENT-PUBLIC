@@ -195,7 +195,7 @@ def process_satellites(input_file: str, output_file: str) -> list:
 
         if api_result['success']:
             result['response'] = api_result['data']
-            num_points = len(api_result['data'].get('trajectory', []))
+            num_points = len(api_result['data'].get('trajectories', []))
             print(f"Success ({num_points} points)")
         else:
             result['error'] = api_result.get('error', 'Unknown error')
@@ -234,11 +234,11 @@ def plot_trajectory(result: dict, save_path: str = None) -> None:
         print(f"Satellite {result.get('satellite_index')}: No trajectory (failed)")
         return
 
-    trajectory = result['response'].get('trajectory', [])
-    if not trajectory:
+    trajectories = result['response'].get('trajectories', [])
+    if not trajectories:
         return
 
-    traj = np.array(trajectory) / 1000.0  # Convert to km
+    traj = np.array([t['statevector'][:3] for t in trajectories])  # positions in km
     satellite_idx = result.get('satellite_index', 1)
 
     fig = plt.figure(figsize=(10, 8))
@@ -287,8 +287,8 @@ def plot_all_trajectories(results: list, save_prefix: str = "trajectory_satellit
         satellite_idx = result.get('satellite_index', 1)
         save_path = f"{save_prefix}_{satellite_idx}.png"
 
-        trajectory = result['response'].get('trajectory', [])
-        traj = np.array(trajectory) / 1000.0
+        trajectories = result['response'].get('trajectories', [])
+        traj = np.array([t['statevector'][:3] for t in trajectories])  # positions in km
 
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, projection='3d')
