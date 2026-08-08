@@ -1,6 +1,8 @@
 # Output files
 api_responses.json
 *.png
+# ...but keep the committed demo outputs (results + sample plot)
+!outputs/*.png
 
 # Python
 __pycache__/

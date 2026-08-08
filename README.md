@@ -1,159 +1,103 @@
 # PINN API Client
 
-A Jupyter notebook client for calling the PINN (Physics-Informed Neural Network) satellite orbit propagation API.
+A small client for the PINN (Physics-Informed Neural Network) satellite orbit-propagation
+API. It ships a 200-satellite demo dataset and two tiny scripts that propagate it two ways —
+one satellite per request (**sequential**) and all satellites in one request (**batch**) — so
+you can compare them directly.
 
-## Overview
-
-This tool:
-1. Reads satellite state vectors from an input JSON file
-2. Calls the PINN API endpoint to get trajectory predictions
-3. Saves API responses to an output JSON file
-4. Generates 3D trajectory plots and saves them as images
-
-## Project Structure
+## What's in here
 
 ```
-pinn-api-client/
-├── api_client.ipynb    # Main notebook (run this)
-├── pinn_client.py      # API functions (implementation)
-├── input_states.json   # Sample input file
-├── requirements.txt    # Python dependencies
-└── README.md
+data/states_200.json          200 demo state vectors (100 LEO + 100 GEO), EME2000, metres
+propagate_sequential.py       propagate the 200 states via POST /pinn        (200 calls)
+propagate_batch.py            propagate the 200 states via POST /pinn_batch   (1 call)
+make_samples.py               pick 5 sample sats -> step-by-step CSV + 3D plot
+outputs/                      generated results (see below)
+requirements.txt
 ```
 
-## Prerequisites
+## Quickstart
 
-- Python 3.8+
-- pip (Python package manager)
+```bash
+pip install -r requirements.txt
 
-## Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/divyanshde/pinn-api-client.git
-   cd pinn-api-client
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Usage
-
-1. **Prepare input file**: Edit `input_states.json` with your satellite state vectors (see format below)
-
-2. **Run the notebook**: Open `api_client.ipynb` in Jupyter and run all cells
-   ```bash
-   jupyter notebook api_client.ipynb
-   ```
-
-3. **View outputs**:
-   - `api_responses.json` - API responses with trajectory data
-   - `trajectory_satellite_X.png` - 3D trajectory plots for each satellite
-
-## Input File Format
-
-The input file (`input_states.json`) supports multiple formats:
-
-### JSON Array (recommended)
-```json
-[
-  {
-    "initial_position": [-3373940.962, 954637.389, -6038104.174],
-    "initial_velocity": [-5466.05319, 3727.802041, 3649.934323],
-    "T_STEP_DURATION": 5000,
-    "N_STEPS": 1,
-    "POINTS_PER_STEP": 50,
-    "start_date": "2025-11-11T14:17:48.827Z"
-  },
-  {
-    ...
-  }
-]
+python propagate_sequential.py     # -> outputs/results_sequential.json
+python propagate_batch.py          # -> outputs/results_batch.json  (+ equivalence check)
+python make_samples.py             # -> outputs/sample5_steps.csv + sample5_trajectory_3d.png
 ```
 
-### Concatenated JSON Objects
-```json
-{
-  "initial_position": [...],
-  ...
-}
+By default the scripts call `https://dev-pinn.bosonqpsi.com`. Point them elsewhere with:
 
-{
-  "initial_position": [...],
-  ...
-}
+```bash
+PINN_API=https://my-host python propagate_batch.py
 ```
 
-### Alternate Format (auto-converted)
+**Propagation window:** each regime is propagated at its **maximum single-shot horizon** —
+**LEO 5,000 s, GEO 10,000 s** (50 points each). Because the batch endpoint takes one window per
+call, `propagate_batch.py` issues **one call per regime** (LEO @ 5,000 s, GEO @ 10,000 s) — still
+2 calls for all 200 satellites versus 200 sequential calls.
 
-The client also supports an alternate format with separate position/velocity fields in kilometers. This format is auto-detected and converted to the API format.
+## The dataset
+
+`data/states_200.json` is a list of 200 satellites, each in the API-native format
+(EME2000, **metres / m·s⁻¹**), with a `regime` label and epoch:
 
 ```json
 {
-  "xpos": -41825.915857758,
-  "ypos": -5226.43453712596,
-  "zpos": 1386.1644692968,
-  "xvel": 0.377893637472634,
-  "yvel": -3.04789052585241,
-  "zvel": -0.130866937678928,
-  "epoch": "2025-12-03T02:20:57.497920Z"
+  "id": "leo-47",
+  "regime": "leo",
+  "initial_position": [-4360840.15, -3501658.32, 4454859.44],
+  "initial_velocity": [-678.62, -5327.25, -5146.17],
+  "start_date": "2026-01-29T14:12:23.109262Z"
 }
 ```
 
-**Auto-conversion:**
-- `xpos/ypos/zpos` (km) → `initial_position` (meters)
-- `xvel/yvel/zvel` (km/s) → `initial_velocity` (m/s)
-- `epoch` → `start_date`
-- Default values applied: `T_STEP_DURATION=5000`, `N_STEPS=1`, `POINTS_PER_STEP=50`
+100 LEO + 100 GEO, taken from the internal benchmarking sets. `states_200.json` is
+self-contained — the source spreadsheets are not needed to run the client.
 
-## Input Parameters
+## Outputs
 
-### API Format
+| File | Produced by | Contents |
+|---|---|---|
+| `outputs/results_sequential.json` | `propagate_sequential.py` | all 200 trajectories + timing (`meta`) |
+| `outputs/results_batch.json` | `propagate_batch.py` | all 200 trajectories + `device`/`gpu_fallback`/timing |
+| `outputs/sample5_steps.csv` | `make_samples.py` | 5 sample satellites, **every** step (50 points): position + velocity per timestamp |
+| `outputs/sample5_trajectory_3d.png` | `make_samples.py` | 3D trajectories of the 5 samples (LEO and GEO on separate axes) |
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `initial_position` | [x, y, z] | Position in meters (EME2000 frame) |
-| `initial_velocity` | [vx, vy, vz] | Velocity in m/s (EME2000 frame) |
-| `T_STEP_DURATION` | number | Propagation duration per step (seconds) |
-| `N_STEPS` | integer | Number of propagation steps |
-| `POINTS_PER_STEP` | integer | Output points per step |
-| `start_date` | string | ISO 8601 timestamp |
+Each trajectory is 50 points of `{ "statevector": [x, y, z, vx, vy, vz], "timestamp": ... }`
+(positions in km, velocities in km·s⁻¹).
 
-### Alternate Format
+## Benchmark: speed & accuracy vs Orekit
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `xpos`, `ypos`, `zpos` | number | Position in kilometers |
-| `xvel`, `yvel`, `zvel` | number | Velocity in km/s |
-| `epoch` | string | ISO 8601 timestamp |
+Full-dataset benchmark of the deployed API (how users call it) against Orekit run locally
+(how users generate truth). Datasets: **3,011 LEO** and **1,411 GEO** unseen states, 5000 s arc,
+50 points each. Speed is API round-trip; Orekit is a warm local J2 propagation.
 
-## API Response
+| Regime | n | Sequential `/pinn` | Batch `/pinn_batch` | Local Orekit | Batch vs Orekit | Mean accuracy* |
+|---|---:|---:|---:|---:|---:|---:|
+| LEO | 3,011 | 859 s (285 ms/call) | **9.4 s** | 29 s | **3.1× faster** | 1.40 km |
+| GEO | 1,411 | 416 s (295 ms/call) | **5.5 s** | 18 s | **3.2× faster** | 0.054 km (54 m) |
 
-```json
-{
-  "trajectory": [
-    [x1, y1, z1],
-    [x2, y2, z2],
-    ...
-  ]
-}
-```
+<sub>*Mean position deviation, PINN vs Orekit, over the 5000 s arc.</sub>
 
-The trajectory contains position coordinates in meters for each time step.
+Takeaways:
+- **Sequential per-call is HTTP-bound** (~0.28 s/call) — for many objects it loses to a local
+  Orekit loop. **Batch amortises one round-trip over the whole set** and beats local Orekit ~3×.
+- **Batch vs sequential ≈ 91× (LEO) / 76× (GEO)**; positions are identical between the two modes
+  (agree to a few metres). The demo scripts here reproduce the pattern: sequential ≈ 55 s vs
+  batch ≈ 6 s (2 regime calls) for the 200-satellite set.
+- The batch call currently reports `device: cpu`, `gpu_fallback: true` (the deploy box has no
+  CUDA GPU); on a GPU-backed deployment the batch lead widens further.
+- **Recommendation:** to propagate many objects, use `POST /pinn_batch`, not a per-satellite loop.
 
-## Configuration
+## API reference (summary)
 
-Edit these variables in the notebook (Cell 1) to customize paths:
+**`POST /pinn`** — one satellite. Body: `initial_position`/`initial_velocity` (metres, EME2000),
+`T_STEP_DURATION`, `N_STEPS`, `POINTS_PER_STEP`, `start_date`. Returns
+`{ "trajectories": [{statevector, timestamp}], "satellite_type" }`.
 
-```python
-API_URL = "https://dev-pinn.bosonqpsi.com/pinn"
-INPUT_FILE = "input_states.json"
-OUTPUT_FILE = "api_responses.json"
-PLOT_OUTPUT = "trajectory_plot.png"
-```
-
-## License
-
-Private - BosonQ Psi
+**`POST /pinn_batch`** — many satellites in one call. Body: `states: [{initial_position,
+initial_velocity, start_date}]`, plus `T_STEP_DURATION`/`N_STEPS`/`POINTS_PER_STEP`,
+`regime` (`auto`|`leo`|`geo`), `use_gpu`. Returns
+`{ "device", "gpu_fallback", "count", "results": [{satellite_type, trajectories}] }`
+in input order. Max 4096 states per call.
